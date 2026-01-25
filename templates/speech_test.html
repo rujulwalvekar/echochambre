@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Speech Test</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 40px;
+            background: #1a1a2e;
+            color: white;
+        }
+
+        button {
+            padding: 20px 40px;
+            font-size: 18px;
+            cursor: pointer;
+            margin: 10px;
+        }
+
+        #output {
+            margin-top: 20px;
+            padding: 20px;
+            background: #333;
+            border-radius: 8px;
+            min-height: 100px;
+        }
+
+        .success {
+            color: #4ade80;
+        }
+
+        .error {
+            color: #f87171;
+        }
+
+        .warning {
+            color: #fbbf24;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🎤 Speech Recognition Test</h1>
+    <p>This page tests if your browser supports Web Speech API.</p>
+
+    <button id="requestMicBtn">1. Request Mic Permission</button>
+    <button id="startBtn">2. Start Listening</button>
+    <button id="stopBtn">3. Stop</button>
+
+    <div id="output">
+        <p>First click "Request Mic Permission", then "Start Listening"</p>
+    </div>
+
+    <script>
+        const output = document.getElementById('output');
+        const requestMicBtn = document.getElementById('requestMicBtn');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        let recognition = null;
+        let micStream = null;
+
+        function log(msg, type = 'info') {
+            const p = document.createElement('p');
+            p.textContent = new Date().toLocaleTimeString() + ' - ' + msg;
+            if (type === 'success') p.className = 'success';
+            if (type === 'error') p.className = 'error';
+            if (type === 'warning') p.className = 'warning';
+            output.appendChild(p);
+            console.log(msg);
+        }
+
+        // Check support
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            log('❌ Speech Recognition NOT SUPPORTED in this browser!', 'error');
+        } else {
+            log('✅ Speech Recognition is supported!', 'success');
+        }
+
+        // Step 1: Request mic permission explicitly
+        requestMicBtn.onclick = async function () {
+            log('Requesting microphone permission...');
+            try {
+                micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                log('✅ Microphone permission GRANTED!', 'success');
+
+                // Test if we're getting audio
+                const audioContext = new AudioContext();
+                const source = audioContext.createMediaStreamSource(micStream);
+                const analyser = audioContext.createAnalyser();
+                source.connect(analyser);
+
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                let hasSound = false;
+
+                // Check for audio input for 2 seconds
+                log('🔊 Testing mic input... Speak now!', 'warning');
+                const checkInterval = setInterval(() => {
+                    analyser.getByteFrequencyData(dataArray);
+                    const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                    if (average > 10) {
+                        hasSound = true;
+                        log('🎵 Audio detected! Mic is working.', 'success');
+                        clearInterval(checkInterval);
+                    }
+                }, 100);
+
+                setTimeout(() => {
+                    clearInterval(checkInterval);
+                    if (!hasSound) {
+                        log('⚠️ No audio detected from mic. Is it muted or disconnected?', 'warning');
+                    }
+                }, 3000);
+
+            } catch (e) {
+                log('❌ Mic permission DENIED: ' + e.message, 'error');
+                log('Go to System Preferences > Security & Privacy > Privacy > Microphone and enable Chrome', 'error');
+            }
+        };
+
+        // Step 2: Start speech recognition
+        startBtn.onclick = function () {
+            if (!micStream) {
+                log('⚠️ Please request mic permission first!', 'warning');
+                return;
+            }
+
+            log('Starting speech recognition...');
+
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                log('🎤 Listening... Speak now!', 'success');
+            };
+
+            recognition.onresult = (event) => {
+                let transcript = '';
+                for (let i = 0; i < event.results.length; i++) {
+                    transcript += event.results[i][0].transcript;
+                }
+                log('📝 Heard: "' + transcript + '"', 'success');
+            };
+
+            recognition.onerror = (event) => {
+                log('❌ Error: ' + event.error, 'error');
+            };
+
+            recognition.onend = () => {
+                log('⏹️ Recognition ended.');
+            };
+
+            try {
+                recognition.start();
+            } catch (e) {
+                log('❌ Failed to start: ' + e.message, 'error');
+            }
+        };
+
+        stopBtn.onclick = function () {
+            if (recognition) {
+                recognition.stop();
+                log('Stopped.');
+            }
+        };
+    </script>
+</body>
+
+</html>

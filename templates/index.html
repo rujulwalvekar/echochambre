@@ -1,0 +1,568 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div x-data="app()" class="h-full flex flex-col relative">
+
+    <!-- ================= SCENE 1: VOICE / LISTENING ================= -->
+    <div x-show="currentMode === 'voice'" x-transition:enter="transition transform ease-out duration-300"
+        x-transition:enter-start="opacity-0 translate-y-10" x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition transform ease-in duration-300"
+        x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 -translate-y-10"
+        class="absolute inset-0 flex flex-col z-10 bg-gradient-to-b from-[#1a103c] to-[#0f172a]">
+
+        <!-- Header -->
+        <header class="flex items-center justify-between p-6">
+            <button class="text-white/70 hover:text-white transition"><i data-lucide="x" class="w-6 h-6"></i></button>
+            <div class="flex items-center gap-2 text-white font-semibold tracking-wider text-sm opacity-90">
+                <span class="text-accent"><i data-lucide="audio-lines" class="w-5 h-5"></i></span>
+                ECHO CHAMBRE
+            </div>
+            <button class="text-white/70 hover:text-white transition"><i data-lucide="settings"
+                    class="w-6 h-6"></i></button>
+        </header>
+
+        <!-- Status Pill -->
+        <div class="flex justify-center mt-4">
+            <div
+                class="px-4 py-2 bg-white/5 rounded-full border border-white/10 flex items-center gap-2 text-xs font-light text-slate-300 shadow-lg backdrop-blur-md">
+                <span class="w-2 h-2 rounded-full animate-pulse"
+                    :class="isListening ? 'bg-red-500' : 'bg-accent'"></span>
+                <span x-text="isListening ? 'Listening...' : 'Tap mic to speak'"></span>
+            </div>
+        </div>
+
+        <!-- Main Pulse Animation -->
+        <div class="flex-grow flex flex-col items-center justify-center relative">
+            <!-- Ripples -->
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div class="w-64 h-64 border border-white/5 rounded-full animate-[ping_3s_linear_infinite] absolute"
+                    x-show="isListening">
+                </div>
+                <div class="w-80 h-80 border border-white/5 rounded-full animate-[ping_3s_linear_infinite_1s] absolute"
+                    x-show="isListening">
+                </div>
+                <div class="w-48 h-48 bg-accent/20 rounded-full blur-3xl absolute animate-pulse-slow"></div>
+            </div>
+
+            <!-- Mic Circle - Only show when NOT recording -->
+            <button @click="startListening()" x-show="!isListening"
+                class="relative w-24 h-24 rounded-full flex items-center justify-center shadow-[0_0_40px_rgba(99,102,241,0.5)] z-20 hover:scale-105 transition-all duration-300 bg-accent">
+                <i data-lucide="mic" class="w-10 h-10 text-white"></i>
+            </button>
+
+            <!-- Animated circle when recording -->
+            <div x-show="isListening"
+                class="relative w-24 h-24 rounded-full bg-red-500/30 flex items-center justify-center z-20 animate-pulse">
+                <div class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center">
+                    <i data-lucide="mic" class="w-8 h-8 text-white"></i>
+                </div>
+            </div>
+
+            <!-- Text -->
+            <h2 class="mt-12 text-3xl font-bold text-white tracking-tight text-center px-6">
+                <span x-show="!isListening && !lastTranscript">Go ahead, I'm <br /> listening...</span>
+                <span x-show="isListening" class="text-red-300">Speak now...</span>
+                <span x-show="!isListening && lastTranscript" class="text-lg font-normal text-slate-300 italic"
+                    x-text="`&quot;${lastTranscript}&quot;`"></span>
+            </h2>
+        </div>
+
+        <!-- ================= REVIEW OVERLAY ================= -->
+        <div x-show="isReviewing" x-transition.opacity
+            class="absolute inset-0 z-50 bg-[#0f172a]/95 backdrop-blur-md flex flex-col items-center justify-center p-6">
+
+            <h3 class="text-white font-bold text-xl mb-6">Review your thought</h3>
+
+            <div class="w-full max-w-sm bg-white/5 border border-white/10 rounded-2xl p-4 mb-8">
+                <textarea x-model="lastTranscript"
+                    class="w-full h-48 bg-transparent text-white text-lg focus:outline-none resize-none placeholder-white/30"
+                    placeholder="Your thought will appear here..."></textarea>
+            </div>
+
+            <div class="flex gap-4 w-full max-w-sm">
+                <button @click="discardRecording()"
+                    class="flex-1 py-4 rounded-xl bg-white/10 text-white font-medium hover:bg-white/20 transition">
+                    Discard
+                </button>
+                <button @click="confirmSave()"
+                    class="flex-1 py-4 rounded-xl bg-accent text-white font-bold shadow-lg hover:bg-accent/90 transition flex items-center justify-center gap-2">
+                    <i data-lucide="save" class="w-5 h-5"></i>
+                    Save to Brain
+                </button>
+            </div>
+        </div>
+
+
+
+        <!-- Notification Toast -->
+        <div class="px-6 mb-8" x-show="toastMessage" x-transition>
+            <div class="glass-panel p-4 rounded-xl flex items-center gap-4">
+                <div class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                    :class="toastType === 'success' ? 'bg-emerald-500/20' : 'bg-red-500/20'">
+                    <i :data-lucide="toastType === 'success' ? 'check' : 'alert-circle'" class="w-5 h-5"
+                        :class="toastType === 'success' ? 'text-emerald-400' : 'text-red-400'"></i>
+                </div>
+                <div class="text-sm text-slate-300" x-text="toastMessage"></div>
+            </div>
+        </div>
+
+        <!-- Bottom Controls -->
+        <div class="p-6 pb-10 flex items-center justify-between gap-6">
+            <button @click="currentMode = 'chat'"
+                class="flex-1 py-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 text-white font-medium flex items-center justify-center gap-2 transition-all">
+                <i data-lucide="keyboard" class="w-5 h-5"></i>
+                Type
+            </button>
+
+            <!-- Stop button - Only show when recording -->
+            <button @click="stopAndReview()" x-show="isListening"
+                class="w-16 h-16 rounded-full bg-slate-100 hover:bg-white text-black flex items-center justify-center shadow-lg transition-all hover:scale-105">
+                <div class="w-6 h-6 bg-black rounded-sm"></div>
+            </button>
+
+            <!-- Placeholder when not recording to maintain spacing -->
+            <div x-show="!isListening" class="w-16 h-16"></div>
+
+            <a href="/brain"
+                class="flex-1 py-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 text-white font-medium flex items-center justify-center gap-2 transition-all">
+                <i data-lucide="brain" class="w-5 h-5"></i>
+                Context
+            </a>
+        </div>
+    </div>
+
+    <!-- ================= SCENE 2: CHAT ================= -->
+    <div x-show="currentMode === 'chat'" x-cloak x-transition:enter="transition transform ease-out duration-300"
+        x-transition:enter-start="opacity-0 -translate-y-10" x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition transform ease-in duration-300"
+        x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 translate-y-10"
+        class="absolute inset-0 flex flex-col z-20 bg-[#0f172a]">
+
+        <!-- Header -->
+        <header
+            class="flex items-center justify-between p-4 border-b border-white/5 bg-[#0f172a]/80 backdrop-blur-md z-30">
+            <button @click="currentMode = 'voice'" class="p-2 text-slate-400 hover:text-white transition">
+                <i data-lucide="arrow-left" class="w-6 h-6"></i>
+            </button>
+            <div class="text-center">
+                <h1 class="text-lg font-bold text-white">Echo Chambre</h1>
+                <div class="flex items-center justify-center gap-1.5" x-show="isTyping">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span class="text-xs text-slate-400">Big Brain is thinking...</span>
+                </div>
+            </div>
+            <button class="p-2 text-slate-400 hover:text-white transition">
+                <a href="/brain">
+                    <i data-lucide="brain" class="w-6 h-6"></i>
+                </a>
+            </button>
+        </header>
+
+        <!-- Chat Area -->
+        <div class="flex-grow overflow-y-auto p-4 space-y-6 no-scrollbar" id="chat-container">
+
+            <!-- Date Separator -->
+            <div class="text-center text-[10px] text-slate-500 font-medium uppercase tracking-widest my-4">Today</div>
+
+            <!-- Messages -->
+            <template x-for="msg in messages" :key="msg.id">
+                <div :class="msg.role === 'assistant' ? 'flex justify-start' : 'flex justify-end'">
+                    <div class="max-w-[85%] flex gap-3 items-end">
+                        <!-- AI Avatar -->
+                        <div x-show="msg.role === 'assistant'"
+                            class="w-8 h-8 rounded-full bg-accent flex-shrink-0 flex items-center justify-center text-white text-xs mb-1">
+                            <i data-lucide="brain-circuit" class="w-4 h-4"></i>
+                        </div>
+
+                        <!-- Bubble -->
+                        <div
+                            :class="msg.role === 'assistant' 
+                            ? 'bg-slate-800 text-slate-200 rounded-2xl rounded-bl-sm p-4 text-sm leading-relaxed shadow-md border border-white/5' 
+                            : 'bg-indigo-600 text-white rounded-2xl rounded-br-sm p-4 text-sm leading-relaxed shadow-md'">
+                            <span x-html="msg.text"></span>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Typing Indicator -->
+            <div class="flex justify-start" x-show="isTyping">
+                <div class="flex gap-3 items-end">
+                    <div
+                        class="w-8 h-8 rounded-full bg-accent flex-shrink-0 flex items-center justify-center text-white text-xs mb-1">
+                        <i data-lucide="brain-circuit" class="w-4 h-4"></i>
+                    </div>
+                    <div class="bg-transparent text-slate-400 text-xs p-2">
+                        Big Brain is typing...
+                    </div>
+                </div>
+            </div>
+
+            <div class="h-4"></div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="p-4 bg-[#0f172a]/95 backdrop-blur-md border-t border-white/5">
+            <form @submit.prevent="sendMessage" class="relative flex items-center gap-3">
+                <div
+                    class="bg-slate-800/50 border border-white/10 rounded-full flex-grow flex items-center px-1 py-1 focus-within:border-accent/50 transition-colors">
+
+                    <!-- Voice Input Toggle -->
+                    <button type="button" @click="toggleChatVoiceInput()" class="p-2.5 rounded-full transition"
+                        :class="isChatListening ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'">
+                        <i :data-lucide="isChatListening ? 'mic-off' : 'mic'" class="w-5 h-5"></i>
+                    </button>
+
+                    <input type="text" x-model="inputText" placeholder="Type or tap mic to speak..."
+                        class="bg-transparent border-none text-white text-sm w-full focus:ring-0 placeholder-slate-500 py-2.5 px-2"
+                        :disabled="isTyping || isChatListening">
+
+                    <!-- Send Button -->
+                    <button type="submit"
+                        class="p-2.5 rounded-full bg-accent text-white shadow-lg hover:bg-accent/90 transition disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-95"
+                        :disabled="!inputText.trim() || isTyping">
+                        <i data-lucide="arrow-up" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </form>
+
+        </div>
+    </div>
+
+</div>
+
+<script>
+    function app() {
+        return {
+            currentMode: 'voice',
+            inputText: '',
+            isTyping: false,
+            messages: [
+                { id: 1, role: 'assistant', text: "Hey! I'm your Echo Chambre 🧠. Share what's on your mind, or use Voice mode to record your thoughts." }
+            ],
+
+            // Voice Mode State
+            isListening: false,
+            isReviewing: false,
+            lastTranscript: '',
+            recognition: null,
+            toastMessage: '',
+            toastType: 'success',
+
+            // Chat Voice Input State
+            isChatListening: false,
+            chatRecognition: null,
+
+            init() {
+                this.$watch('messages', () => {
+                    this.scrollToBottom();
+                });
+                setTimeout(() => this.scrollToBottom(), 100);
+
+                // Initialize icons when mode changes
+                this.$watch('currentMode', () => {
+                    setTimeout(() => lucide.createIcons(), 50);
+                });
+                this.$watch('isListening', () => {
+                    setTimeout(() => lucide.createIcons(), 50);
+                });
+                this.$watch('isChatListening', () => {
+                    setTimeout(() => lucide.createIcons(), 50);
+                });
+
+                // Check for Web Speech API support
+                if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                    this.showToast('Voice not supported in this browser. Use Chrome.', 'error');
+                }
+            },
+
+            scrollToBottom() {
+                const container = document.getElementById('chat-container');
+                if (container) container.scrollTop = container.scrollHeight;
+            },
+
+            showToast(message, type = 'success') {
+                this.toastMessage = message;
+                this.toastType = type;
+                setTimeout(() => lucide.createIcons(), 50);
+                setTimeout(() => {
+                    this.toastMessage = '';
+                }, 4000);
+            },
+
+            // ========== VOICE MODE: Record and Save ==========
+            toggleListening() {
+                if (this.isListening) {
+                    this.stopListening();
+                } else {
+                    this.startListening();
+                }
+            },
+
+            startListening() {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) {
+                    this.showToast('Speech recognition not supported', 'error');
+                    return;
+                }
+
+                this.recognition = new SpeechRecognition();
+                this.recognition.continuous = true;
+                this.recognition.interimResults = true;
+                this.recognition.lang = 'en-US';
+
+                // Store final transcripts separately
+                this.finalTranscript = '';
+
+                this.recognition.onresult = (event) => {
+                    let interimTranscript = '';
+
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        const result = event.results[i];
+                        if (result.isFinal) {
+                            this.finalTranscript += result[0].transcript + ' ';
+                            console.log('Final:', result[0].transcript);
+                        } else {
+                            interimTranscript += result[0].transcript;
+                        }
+                    }
+
+                    // Show both final and interim
+                    this.lastTranscript = (this.finalTranscript + interimTranscript).trim();
+                    console.log('Current transcript:', this.lastTranscript);
+                };
+
+                this.recognition.onerror = (event) => {
+                    console.error('Speech error:', event.error);
+                    if (event.error === 'no-speech') {
+                        // This is common, don't show error toast immediately
+                        console.log('No speech detected yet, continuing...');
+                    } else {
+                        this.showToast('Mic error: ' + event.error, 'error');
+                        this.isListening = false;
+                    }
+                };
+
+                this.recognition.onend = () => {
+                    console.log('Recognition ended, isListening:', this.isListening, 'transcript so far:', this.finalTranscript);
+                    // Only restart if we're still supposed to be listening
+                    if (this.isListening) {
+                        // Small delay before restart to avoid rapid cycling
+                        setTimeout(() => {
+                            if (this.isListening && this.recognition) {
+                                try {
+                                    console.log('Auto-restarting recognition...');
+                                    this.recognition.start();
+                                } catch (e) {
+                                    console.error('Could not restart:', e);
+                                    // Try creating a new recognition instance
+                                    this.startListening();
+                                }
+                            }
+                        }, 100);
+                    }
+                };
+
+                try {
+                    this.isListening = true;  // Set BEFORE start to avoid race condition
+                    this.lastTranscript = '';
+                    this.finalTranscript = '';
+                    this.recognition.start();
+                    console.log('Started listening, isListening:', this.isListening);
+                } catch (e) {
+                    console.error('Failed to start:', e);
+                    this.isListening = false;
+                    this.showToast('Failed to start mic: ' + e.message, 'error');
+                }
+            },
+
+            stopListening() {
+                if (this.recognition) {
+                    this.recognition.stop();
+                    this.recognition = null;
+                }
+                this.isListening = false;
+            },
+
+            stopAndReview() {
+                console.log('stopAndReview called');
+                this.stopListening();
+
+                if (!this.lastTranscript.trim()) {
+                    this.showToast('No speech detected. Try again.', 'error');
+                    return;
+                }
+
+                // Switch to review mode
+                this.isReviewing = true;
+            },
+
+            discardRecording() {
+                this.isReviewing = false;
+                this.lastTranscript = '';
+            },
+
+            async confirmSave() {
+                this.isReviewing = false;
+                console.log('Classifying and saving:', this.lastTranscript);
+
+                // Show immediate feedback
+                this.showToast('Saving to Brain...', 'success');
+
+                try {
+                    const res = await fetch('/voice-input', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: this.lastTranscript })
+                    });
+
+                    if (res.ok) {
+                        const data = await res.json();
+                        console.log('Saved:', data);
+
+                        // Small delay to allow the "Saving..." toast to be read
+                        setTimeout(() => {
+                            if (data.type === 'ANCHOR') {
+                                this.showToast('⚓️ Saved as Anchor (Strength)', 'success');
+                            } else {
+                                this.showToast('📔 Saved to Journal (Venting)', 'success');
+                            }
+                        }, 1000);
+
+                        this.lastTranscript = '';
+                    } else {
+                        console.error('Failed to save:', res.status);
+                        this.showToast('Failed to save. Try again.', 'error');
+                    }
+                } catch (err) {
+                    console.error('Network error:', err);
+                    this.showToast('Network error. Try again.', 'error');
+                }
+            },
+
+            // ========== CHAT MODE: Voice Input ==========
+            toggleChatVoiceInput() {
+                if (this.isChatListening) {
+                    this.stopChatVoiceInput();
+                } else {
+                    this.startChatVoiceInput();
+                }
+            },
+
+            startChatVoiceInput() {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) {
+                    this.showToast('Speech recognition not supported', 'error');
+                    return;
+                }
+
+                this.chatRecognition = new SpeechRecognition();
+                this.chatRecognition.continuous = false;
+                this.chatRecognition.interimResults = true;
+                this.chatRecognition.lang = 'en-US';
+
+                this.chatRecognition.onresult = (event) => {
+                    let transcript = '';
+                    for (let i = 0; i < event.results.length; i++) {
+                        transcript += event.results[i][0].transcript;
+                    }
+                    this.inputText = transcript;
+                };
+
+                this.chatRecognition.onerror = (event) => {
+                    console.error('Chat speech error:', event.error);
+                    this.isChatListening = false;
+                };
+
+                this.chatRecognition.onend = () => {
+                    this.isChatListening = false;
+                };
+
+                this.chatRecognition.start();
+                this.isChatListening = true;
+            },
+
+            stopChatVoiceInput() {
+                if (this.chatRecognition) {
+                    this.chatRecognition.stop();
+                    this.chatRecognition = null;
+                }
+                this.isChatListening = false;
+            },
+
+            // ========== CHAT: Send Message ==========
+            async sendMessage() {
+                if (!this.inputText.trim()) return;
+
+                const userMsg = this.inputText;
+                this.messages.push({
+                    id: Date.now(),
+                    role: 'user',
+                    text: userMsg
+                });
+
+                this.inputText = '';
+                this.isTyping = true;
+                this.scrollToBottom();
+
+                try {
+                    const context = this.messages.slice(-10).map(m => ({
+                        role: m.role,
+                        content: m.text
+                    }));
+
+                    const res = await fetch('/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ history: context })
+                    });
+
+                    const data = await res.json();
+
+                    // Handle multi-message response
+                    this.isTyping = false; // Stop initial typing indicator
+
+                    if (Array.isArray(data.response)) {
+                        for (let i = 0; i < data.response.length; i++) {
+                            // Show typing again briefly for subsequent messages
+                            this.isTyping = true;
+                            this.scrollToBottom();
+
+                            // Random delay for natural reading pace (800ms to 1500ms)
+                            await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
+
+                            this.isTyping = false;
+                            this.messages.push({
+                                id: Date.now() + i,
+                                role: 'assistant',
+                                text: data.response[i]
+                            });
+                            this.scrollToBottom();
+                        }
+                    } else {
+                        // Fallback for string response
+                        this.messages.push({
+                            id: Date.now() + 1,
+                            role: 'assistant',
+                            text: data.response
+                        });
+                        this.scrollToBottom();
+                    }
+
+                } catch (error) {
+                    console.error('Error:', error);
+                    this.isTyping = false;
+                    this.messages.push({
+                        id: Date.now() + 1,
+                        role: 'assistant',
+                        text: "I'm having trouble connecting right now. Please try again."
+                    });
+                } finally {
+                    this.isTyping = false;
+                    this.scrollToBottom();
+                }
+            }
+        }
+    }
+</script>
+{% endblock %}
