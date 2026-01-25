@@ -9,7 +9,9 @@ from typing import List
 
 app = FastAPI(title="The Echo Chamber")
 
-# Mount static files (even if empty for now, good practice)
+# Mount static files (ensure directory exists)
+import os
+os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 templates = Jinja2Templates(directory="templates")
