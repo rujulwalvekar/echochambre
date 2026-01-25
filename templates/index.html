@@ -307,7 +307,8 @@
                 }
 
                 this.recognition = new SpeechRecognition();
-                this.recognition.continuous = true;
+                // "continuous = false" is often more robust on mobile; the onend loop handles the restart.
+                this.recognition.continuous = false;
                 this.recognition.interimResults = true;
                 this.recognition.lang = 'en-US';
 
