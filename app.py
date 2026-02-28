@@ -187,6 +187,16 @@ async def whatsapp(request: WhatsAppRequest):
     if not peer or not text:
         raise HTTPException(status_code=400, detail="'from' and 'text' are required")
 
+    # Small-talk guard: don't drag heavy context into short pings like "hey".
+    text_l = text.lower().strip()
+    if len(text_l) < 10 and ("?" not in text_l) and text_l in {"hey", "hi", "hello", "yo", "sup"}:
+        msg = "Hey. What’s on your mind right now—do you want to vent, reflect, or make a decision?"
+        try:
+            database.add_conversation_message(peer, "assistant", msg)
+        except Exception:
+            pass
+        return JSONResponse(content={"messages": [msg]})
+
     # Load last N turns for this peer (DB may be slow/unavailable on cold starts)
     try:
         convo = database.get_conversation(peer, limit=20)
