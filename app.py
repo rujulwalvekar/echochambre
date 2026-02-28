@@ -234,34 +234,26 @@ async def whatsapp(request: WhatsAppRequest):
     except Exception:
         pass
 
-    # Context: candidate set + LLM rerank (prevents unrelated recency bias)
+    # WhatsApp: prefer stable, low-latency retrieval.
+    # Use FTS anchors; include journals only when the user message clearly calls for emotional/relationship context.
     try:
-        anchor_cands = database.get_recent_entries('ANCHOR', limit=50)
-        journal_cands = database.get_recent_entries('JOURNAL', limit=50)
-
-        picked = llm_service.select_relevant_memory_ids(
-            latest_user_text=text,
-            anchor_candidates=anchor_cands,
-            journal_candidates=journal_cands,
-            max_anchors=3,
-            max_journals=2,
-        )
-
-        a_by_id = {int(a['id']): a for a in anchor_cands if a.get('id') is not None}
-        j_by_id = {int(j['id']): j for j in journal_cands if j.get('id') is not None}
-
-        anchor_texts = [a_by_id[i]['content'] for i in picked.get('anchor_ids', []) if i in a_by_id]
-        journal_texts = [j_by_id[i]['content'] for i in picked.get('journal_ids', []) if i in j_by_id]
-
-        # Fallback: if nothing picked, use FTS search as a backup.
-        if not anchor_texts:
-            anchors = database.search_entries(text, 'ANCHOR', limit=4)
-            anchor_texts = [a["content"] for a in anchors]
-        if not journal_texts:
-            journals = database.search_entries(text, 'JOURNAL', limit=4)
-            journal_texts = [j["content"] for j in journals]
+        anchors = database.search_entries(text, 'ANCHOR', limit=4)
+        anchor_texts = [a["content"] for a in anchors]
     except Exception:
         anchor_texts = []
+
+    # Journal gating (avoid dragging unrelated recency like "Ashish" into a neutral planning message)
+    journal_texts = []
+    try:
+        text_l = text.lower()
+        journal_triggers = [
+            "ashish", "breakup", "heart", "hurt", "betray", "promise", "relationship", "love", "anx", "anxiety",
+            "sad", "depressed", "panic", "overwhelmed", "stress", "stressed",
+        ]
+        if any(t in text_l for t in journal_triggers):
+            journals = database.search_entries(text, 'JOURNAL', limit=3)
+            journal_texts = [j["content"] for j in journals]
+    except Exception:
         journal_texts = []
 
     try:
