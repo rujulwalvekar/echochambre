@@ -82,7 +82,7 @@ def analyze_entry(text: str) -> dict:
     
     try:
         response = model.generate_content(prompt)
-        clean_text = response.text.replace('```json', '').replace('```', '').strip()
+        clean_text = _clean_json(response.text)
         import json
         return json.loads(clean_text)
     except Exception as e:
@@ -117,12 +117,87 @@ def analyze_profile(recent_entries_text: str, current_profile: dict) -> dict:
     
     try:
         response = model.generate_content(prompt)
-        clean_text = response.text.replace('```json', '').replace('```', '').strip()
+        clean_text = _clean_json(response.text)
         import json
         return json.loads(clean_text)
     except Exception as e:
         print(f"Profile update error: {e}")
         return current_profile
+
+def _clean_json(text: str) -> str:
+    return text.replace('```json', '').replace('```', '').strip()
+
+
+def select_relevant_memory_ids(
+    latest_user_text: str,
+    anchor_candidates: List[dict],
+    journal_candidates: List[dict],
+    max_anchors: int = 3,
+    max_journals: int = 2,
+) -> dict:
+    """Rerank step: select the most relevant memories for the *current* message.
+
+    This prevents recency bias (e.g., dragging unrelated topics like "Ashish" into a "Pranav" message).
+
+    Returns: {"anchor_ids": [..], "journal_ids": [..]}
+    """
+    if not api_key:
+        return {"anchor_ids": [], "journal_ids": []}
+
+    latest_user_text = (latest_user_text or "").strip()
+    if not latest_user_text:
+        return {"anchor_ids": [], "journal_ids": []}
+
+    def _pack(cands: List[dict], kind: str) -> str:
+        lines = []
+        for c in cands:
+            cid = c.get("id")
+            content = (c.get("content") or "").strip()
+            meta = c.get("metadata") or {}
+            summary = (meta.get("summary") or "").strip() if isinstance(meta, dict) else ""
+            # Keep payload small to reduce latency
+            preview = summary or (content[:180] + ("…" if len(content) > 180 else ""))
+            if cid is None:
+                continue
+            lines.append(f"- id:{cid} {preview}")
+        if not lines:
+            return f"(no {kind} candidates)"
+        return "\n".join(lines)
+
+    anchors_text = _pack(anchor_candidates, "anchor")
+    journals_text = _pack(journal_candidates, "journal")
+
+    prompt = f"""
+You are selecting which past memories are actually relevant to respond to the user's current message.
+
+Current user message:
+"{latest_user_text}"
+
+ANCHOR candidates (truths/strengths):
+{anchors_text}
+
+JOURNAL candidates (context/feelings):
+{journals_text}
+
+Rules:
+- Only select items that are directly relevant to the current message.
+- If the user message is about planning/meeting someone (e.g. Pranav), do NOT select heartbreak/relationship entries unless explicitly relevant.
+- Prefer 0 journals over an unrelated journal.
+- Output ONLY valid JSON with keys: anchor_ids (array of ints), journal_ids (array of ints).
+- Maximum anchor_ids: {max_anchors}. Maximum journal_ids: {max_journals}.
+"""
+
+    try:
+        response = model.generate_content(prompt)
+        import json
+        data = json.loads(_clean_json(response.text))
+        anchor_ids = [int(x) for x in (data.get("anchor_ids") or [])][:max_anchors]
+        journal_ids = [int(x) for x in (data.get("journal_ids") or [])][:max_journals]
+        return {"anchor_ids": anchor_ids, "journal_ids": journal_ids}
+    except Exception as e:
+        print(f"Memory selection error: {e}")
+        return {"anchor_ids": [], "journal_ids": []}
+
 
 def generate_chat_response(history: List[dict], context: List[str] = None, journal_context: List[str] = None, user_profile: dict = None) -> str:
     """

@@ -146,14 +146,34 @@ async def chat(request: ChatRequest):
     # Convert Pydantic models to dicts for the service
     history_dicts = [{"role": msg.role, "content": msg.content} for msg in request.history]
 
-    # Retrieve context relevant to the latest user message (prevents unrelated recency bias)
+    # Retrieve context relevant to the latest user message:
+    # candidate set + LLM rerank (prevents unrelated recency bias)
     latest_user_text = history_dicts[-1]["content"] if history_dicts else ""
 
-    anchors = database.search_entries(latest_user_text, 'ANCHOR', limit=4)
-    anchor_texts = [a["content"] for a in anchors]
+    anchor_cands = database.get_recent_entries('ANCHOR', limit=50)
+    journal_cands = database.get_recent_entries('JOURNAL', limit=50)
 
-    journals = database.search_entries(latest_user_text, 'JOURNAL', limit=4)
-    journal_texts = [j["content"] for j in journals]
+    picked = llm_service.select_relevant_memory_ids(
+        latest_user_text=latest_user_text,
+        anchor_candidates=anchor_cands,
+        journal_candidates=journal_cands,
+        max_anchors=3,
+        max_journals=2,
+    )
+
+    a_by_id = {int(a['id']): a for a in anchor_cands if a.get('id') is not None}
+    j_by_id = {int(j['id']): j for j in journal_cands if j.get('id') is not None}
+
+    anchor_texts = [a_by_id[i]['content'] for i in picked.get('anchor_ids', []) if i in a_by_id]
+    journal_texts = [j_by_id[i]['content'] for i in picked.get('journal_ids', []) if i in j_by_id]
+
+    # Fallback: FTS search
+    if not anchor_texts:
+        anchors = database.search_entries(latest_user_text, 'ANCHOR', limit=4)
+        anchor_texts = [a["content"] for a in anchors]
+    if not journal_texts:
+        journals = database.search_entries(latest_user_text, 'JOURNAL', limit=4)
+        journal_texts = [j["content"] for j in journals]
 
     # Fetch User Profile
     user_profile = database.get_profile()
@@ -214,17 +234,34 @@ async def whatsapp(request: WhatsAppRequest):
     except Exception:
         pass
 
-    # Context: retrieve memories relevant to THIS message (prevents recency bias)
+    # Context: candidate set + LLM rerank (prevents unrelated recency bias)
     try:
-        anchors = database.search_entries(text, 'ANCHOR', limit=4)
-        anchor_texts = [a["content"] for a in anchors]
+        anchor_cands = database.get_recent_entries('ANCHOR', limit=50)
+        journal_cands = database.get_recent_entries('JOURNAL', limit=50)
+
+        picked = llm_service.select_relevant_memory_ids(
+            latest_user_text=text,
+            anchor_candidates=anchor_cands,
+            journal_candidates=journal_cands,
+            max_anchors=3,
+            max_journals=2,
+        )
+
+        a_by_id = {int(a['id']): a for a in anchor_cands if a.get('id') is not None}
+        j_by_id = {int(j['id']): j for j in journal_cands if j.get('id') is not None}
+
+        anchor_texts = [a_by_id[i]['content'] for i in picked.get('anchor_ids', []) if i in a_by_id]
+        journal_texts = [j_by_id[i]['content'] for i in picked.get('journal_ids', []) if i in j_by_id]
+
+        # Fallback: if nothing picked, use FTS search as a backup.
+        if not anchor_texts:
+            anchors = database.search_entries(text, 'ANCHOR', limit=4)
+            anchor_texts = [a["content"] for a in anchors]
+        if not journal_texts:
+            journals = database.search_entries(text, 'JOURNAL', limit=4)
+            journal_texts = [j["content"] for j in journals]
     except Exception:
         anchor_texts = []
-
-    try:
-        journals = database.search_entries(text, 'JOURNAL', limit=4)
-        journal_texts = [j["content"] for j in journals]
-    except Exception:
         journal_texts = []
 
     try:
