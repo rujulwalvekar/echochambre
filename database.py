@@ -33,6 +33,14 @@ def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         ''')
+
+        # Full-text search index for semantic-ish retrieval (fast, hackathon-safe).
+        # Uses built-in Postgres FTS (no extensions required).
+        c.execute('''
+            CREATE INDEX IF NOT EXISTS entries_content_fts_idx
+            ON entries
+            USING GIN (to_tsvector('english', content))
+        ''')
         
         # User Profile table
         c.execute('''
@@ -120,38 +128,84 @@ def update_profile(profile_data: Dict):
 def add_anchor(content: str):
     add_entry(content, 'ANCHOR')
 
+def _normalize_entry_rows(rows) -> List[Dict[str, Any]]:
+    results = []
+    for row in rows:
+        d = dict(row)
+
+        if isinstance(d.get('metadata'), str):
+            try:
+                d['metadata'] = json.loads(d['metadata'])
+            except Exception:
+                d['metadata'] = {}
+        elif d.get('metadata') is None:
+            d['metadata'] = {}
+
+        if d.get('created_at'):
+            d['created_at'] = str(d['created_at'])
+
+        results.append(d)
+    return results
+
+
 def get_recent_entries(entry_type: str = 'ANCHOR', limit: int = 5) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     c = conn.cursor()
-    # If type is ALL, fetch everything
     if entry_type == 'ALL':
         c.execute('SELECT * FROM entries ORDER BY created_at DESC LIMIT %s', (limit,))
     else:
         c.execute('SELECT * FROM entries WHERE type = %s ORDER BY created_at DESC LIMIT %s', (entry_type, limit))
-        
+
     rows = c.fetchall()
     conn.close()
-    
-    results = []
-    for row in rows:
-        # Convert row to dict (RealDictCursor already does this conceptually, but ensuring copy)
-        d = dict(row)
-        
-        # Handle metadata: JSONB returns dict, but check just in case
-        if isinstance(d.get('metadata'), str):
-             try:
-                d['metadata'] = json.loads(d['metadata'])
-             except:
-                d['metadata'] = {}
-        elif d.get('metadata') is None:
-            d['metadata'] = {}
-            
-        # Handle created_at formatting (Postgres returns datetime object)
-        if d.get('created_at'):
-             d['created_at'] = str(d['created_at'])
-             
-        results.append(d)
-    return results
+    return _normalize_entry_rows(rows)
+
+
+def search_entries(query: str, entry_type: str = 'ALL', limit: int = 5) -> List[Dict[str, Any]]:
+    """Semantic-ish retrieval using Postgres full-text search.
+
+    This replaces naive "last N" context selection and prevents unrelated recency bias.
+    """
+    if not query or not query.strip():
+        return get_recent_entries(entry_type if entry_type != 'ALL' else 'ALL', limit)
+
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    if entry_type == 'ALL':
+        c.execute(
+            '''
+            SELECT *
+            FROM entries
+            WHERE to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+            ORDER BY ts_rank_cd(to_tsvector('english', content), plainto_tsquery('english', %s)) DESC,
+                     created_at DESC
+            LIMIT %s
+            ''',
+            (query, query, limit),
+        )
+    else:
+        c.execute(
+            '''
+            SELECT *
+            FROM entries
+            WHERE type = %s
+              AND to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+            ORDER BY ts_rank_cd(to_tsvector('english', content), plainto_tsquery('english', %s)) DESC,
+                     created_at DESC
+            LIMIT %s
+            ''',
+            (entry_type, query, query, limit),
+        )
+
+    rows = c.fetchall()
+    conn.close()
+
+    # Fallback to recency if nothing matched.
+    if not rows:
+        return get_recent_entries(entry_type if entry_type != 'ALL' else 'ALL', limit)
+
+    return _normalize_entry_rows(rows)
 
 def get_recent_anchors(limit: int = 5) -> List[Dict[str, Any]]:
     return get_recent_entries('ANCHOR', limit)

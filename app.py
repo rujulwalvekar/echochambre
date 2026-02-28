@@ -92,14 +92,14 @@ async def find_hope(hope: HopeRequest):
     # Get random anchors + all recent ones ensuring we have some context
     # Strategy: fetch a few random ones to remind the user of different truths
     random_anchors = database.get_random_anchors(limit=5)
-    
+
     response_text = llm_service.generate_hope(
         trigger=hope.trigger,
         feeling=hope.feeling,
         fear=hope.fear,
         anchors=random_anchors
     )
-    
+
     return JSONResponse(content={"response": response_text})
 
 class VoiceInputRequest(BaseModel):
@@ -111,15 +111,15 @@ class VoiceInputRequest(BaseModel):
 async def process_voice_input(data: VoiceInputRequest):
     if not data.content.strip():
         raise HTTPException(status_code=400, detail="Content cannot be empty")
-    
+
     # 1. Rich Analysis
     analysis = llm_service.analyze_entry(data.content)
     entry_type = analysis.get("type", "JOURNAL")
     summary = analysis.get("summary", data.content)
-    
+
     # 2. Save Entry + Rich Metadata
     database.add_entry(data.content, entry_type, metadata=analysis)
-    
+
     # 3. Dynamic Profile Update (Simple trigger: update on every entry for MVP)
     # In production, you'd do this async or every N entries
     try:
@@ -127,18 +127,18 @@ async def process_voice_input(data: VoiceInputRequest):
         # Get last 5 entries to give context for profile update
         recent_entries = database.get_recent_entries("ALL", limit=5)
         recent_text = "\n".join([e['content'] for e in recent_entries])
-        
+
         updated_profile = llm_service.analyze_profile(recent_text, current_profile)
         database.update_profile(updated_profile)
         print("Profile Updated:", updated_profile)
     except Exception as e:
         print(f"Background profile update failed: {e}")
-    
+
     return JSONResponse(content={
         "status": "success",
         "type": entry_type,
         "summary": summary,
-        "analysis": analysis 
+        "analysis": analysis
     })
 
 @app.post("/chat")
@@ -146,13 +146,14 @@ async def chat(request: ChatRequest):
     # Convert Pydantic models to dicts for the service
     history_dicts = [{"role": msg.role, "content": msg.content} for msg in request.history]
 
-    # Fetch recent anchors (strength)
-    recent_anchors = database.get_recent_entries('ANCHOR', limit=3)
-    anchor_texts = [a["content"] for a in recent_anchors]
+    # Retrieve context relevant to the latest user message (prevents unrelated recency bias)
+    latest_user_text = history_dicts[-1]["content"] if history_dicts else ""
 
-    # Fetch recent journal entries (context/feelings)
-    recent_journal = database.get_recent_entries('JOURNAL', limit=3)
-    journal_texts = [j["content"] for j in recent_journal]
+    anchors = database.search_entries(latest_user_text, 'ANCHOR', limit=4)
+    anchor_texts = [a["content"] for a in anchors]
+
+    journals = database.search_entries(latest_user_text, 'JOURNAL', limit=4)
+    journal_texts = [j["content"] for j in journals]
 
     # Fetch User Profile
     user_profile = database.get_profile()
@@ -190,7 +191,7 @@ async def whatsapp(request: WhatsAppRequest):
     # Small-talk guard: don't drag heavy context into short pings like "hey".
     text_l = text.lower().strip()
     if len(text_l) < 10 and ("?" not in text_l) and text_l in {"hey", "hi", "hello", "yo", "sup"}:
-        msg = "Hey. What’s on your mind right now—do you want to vent, reflect, or make a decision?"
+        msg = "Hey. What's on your mind right now-do you want to vent, reflect, or make a decision?"
         try:
             database.add_conversation_message(peer, "assistant", msg)
         except Exception:
@@ -213,16 +214,16 @@ async def whatsapp(request: WhatsAppRequest):
     except Exception:
         pass
 
-    # Context: anchors + journal + profile (best-effort)
+    # Context: retrieve memories relevant to THIS message (prevents recency bias)
     try:
-        recent_anchors = database.get_recent_entries('ANCHOR', limit=3)
-        anchor_texts = [a["content"] for a in recent_anchors]
+        anchors = database.search_entries(text, 'ANCHOR', limit=4)
+        anchor_texts = [a["content"] for a in anchors]
     except Exception:
         anchor_texts = []
 
     try:
-        recent_journal = database.get_recent_entries('JOURNAL', limit=3)
-        journal_texts = [j["content"] for j in recent_journal]
+        journals = database.search_entries(text, 'JOURNAL', limit=4)
+        journal_texts = [j["content"] for j in journals]
     except Exception:
         journal_texts = []
 
@@ -247,7 +248,7 @@ async def whatsapp(request: WhatsAppRequest):
         if not messages:
             messages = ["I'm here. Can you say that again?"]
     except asyncio.TimeoutError:
-        messages = ["I'm here with you—give me a few seconds, then send that again."]
+        messages = ["I'm here with you-give me a few seconds, then send that again."]
     except Exception:
         messages = ["Something glitched on my side. Try again in a minute."]
 
