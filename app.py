@@ -105,7 +105,61 @@ async def find_hope(hope: HopeRequest):
 class VoiceInputRequest(BaseModel):
     content: str
 
+class IngestRequest(BaseModel):
+    from_: str = __import__("pydantic").Field(alias="from")
+    text: str
+    kind: str | None = None
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
 # ... existing routes ...
+
+def infer_entry_type(text: str, explicit_kind: str | None = None) -> str:
+    if explicit_kind:
+        k = explicit_kind.strip().upper()
+        if k in {"ANCHOR", "JOURNAL"}:
+            return k
+
+    t = (text or "").strip()
+    tl = t.lower()
+
+    # Explicit anchor prefixes
+    for prefix in ("anchor:", "truth:", "remember:"):
+        if tl.startswith(prefix):
+            return "ANCHOR"
+
+    return "JOURNAL"
+
+
+@app.post("/ingest")
+async def ingest(data: IngestRequest):
+    """No-LLM ingest endpoint. Always stores the entry; safe to use when Gemini is rate-limited."""
+    text = (data.text or "").strip()
+    peer = (data.from_ or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    entry_type = infer_entry_type(text, data.kind)
+
+    metadata = {
+        "source": "whatsapp",
+        "from": peer,
+        "is_question": text.endswith("?"),
+    }
+
+    # Store as an entry (brain memory)
+    database.add_entry(text, entry_type, metadata=metadata)
+
+    # Store in conversation history too (best-effort)
+    try:
+        database.add_conversation_message(peer or "unknown", "user", text)
+    except Exception:
+        pass
+
+    return JSONResponse(content={"ok": True, "type": entry_type})
+
 
 @app.post("/voice-input")
 async def process_voice_input(data: VoiceInputRequest):
