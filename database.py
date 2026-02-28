@@ -13,7 +13,9 @@ def get_db_connection():
     if not db_url:
         raise ValueError("DATABASE_URL environment variable is not set. Please add your Supabase connection string to .env")
     
-    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+    # Keep serverless calls snappy: fail fast on network/DB issues.
+    # psycopg2 supports connect_timeout (seconds).
+    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor, connect_timeout=3)
     return conn
 
 def init_db():

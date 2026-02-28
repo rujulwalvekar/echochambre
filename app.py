@@ -187,24 +187,39 @@ async def whatsapp(request: WhatsAppRequest):
     if not peer or not text:
         raise HTTPException(status_code=400, detail="'from' and 'text' are required")
 
-    # Load last N turns for this peer
-    convo = database.get_conversation(peer, limit=20)
-    history_dicts = [{"role": m["role"], "content": m["content"]} for m in convo]
+    # Load last N turns for this peer (DB may be slow/unavailable on cold starts)
+    try:
+        convo = database.get_conversation(peer, limit=20)
+        history_dicts = [{"role": m["role"], "content": m["content"]} for m in convo]
+    except Exception:
+        history_dicts = []
 
     # Append current user message
     history_dicts.append({"role": "user", "content": text})
 
-    # Persist user message
-    database.add_conversation_message(peer, "user", text)
+    # Persist user message (best-effort)
+    try:
+        database.add_conversation_message(peer, "user", text)
+    except Exception:
+        pass
 
-    # Context: anchors + journal + profile (same as /chat)
-    recent_anchors = database.get_recent_entries('ANCHOR', limit=3)
-    anchor_texts = [a["content"] for a in recent_anchors]
+    # Context: anchors + journal + profile (best-effort)
+    try:
+        recent_anchors = database.get_recent_entries('ANCHOR', limit=3)
+        anchor_texts = [a["content"] for a in recent_anchors]
+    except Exception:
+        anchor_texts = []
 
-    recent_journal = database.get_recent_entries('JOURNAL', limit=3)
-    journal_texts = [j["content"] for j in recent_journal]
+    try:
+        recent_journal = database.get_recent_entries('JOURNAL', limit=3)
+        journal_texts = [j["content"] for j in recent_journal]
+    except Exception:
+        journal_texts = []
 
-    user_profile = database.get_profile()
+    try:
+        user_profile = database.get_profile()
+    except Exception:
+        user_profile = {}
 
     async def _gen():
         return await asyncio.to_thread(
