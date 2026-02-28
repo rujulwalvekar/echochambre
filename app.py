@@ -56,6 +56,10 @@ async def read_root(request: Request):
         "anchors": recent_anchors
     })
 
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
 @app.get("/speech-test", response_class=HTMLResponse)
 async def speech_test(request: Request):
     return templates.TemplateResponse("speech_test.html", {"request": request})
@@ -172,7 +176,11 @@ async def whatsapp(request: WhatsAppRequest):
 
     Input: {"from": "+E164", "text": "..."}
     Output: {"messages": ["...", "..."]}
+
+    Reliability goals (hackathon): respond fast; never hang.
     """
+
+    import asyncio
 
     peer = request.from_.strip()
     text = request.text.strip()
@@ -198,14 +206,25 @@ async def whatsapp(request: WhatsAppRequest):
 
     user_profile = database.get_profile()
 
-    response_text = llm_service.generate_chat_response(
-        history_dicts,
-        context=anchor_texts,
-        journal_context=journal_texts,
-        user_profile=user_profile,
-    )
+    async def _gen():
+        return await asyncio.to_thread(
+            llm_service.generate_chat_response,
+            history_dicts,
+            context=anchor_texts,
+            journal_context=journal_texts,
+            user_profile=user_profile,
+        )
 
-    messages = [msg.strip() for msg in response_text.split("|||") if msg.strip()]
+    try:
+        # Hard timeout so OpenClaw doesn't hang waiting on Vercel cold start / LLM latency.
+        response_text = await asyncio.wait_for(_gen(), timeout=8.0)
+        messages = [msg.strip() for msg in response_text.split("|||") if msg.strip()]
+        if not messages:
+            messages = ["I'm here. Can you say that again?"]
+    except asyncio.TimeoutError:
+        messages = ["I'm here with you—give me a few seconds, then send that again."]
+    except Exception:
+        messages = ["Something glitched on my side. Try again in a minute."]
 
     # Persist assistant messages
     for msg in messages:
