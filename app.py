@@ -242,7 +242,7 @@ async def whatsapp(request: WhatsAppRequest):
 
     try:
         # Hard timeout so OpenClaw doesn't hang waiting on Vercel cold start / LLM latency.
-        response_text = await asyncio.wait_for(_gen(), timeout=8.0)
+        response_text = await asyncio.wait_for(_gen(), timeout=20.0)
         messages = [msg.strip() for msg in response_text.split("|||") if msg.strip()]
         if not messages:
             messages = ["I'm here. Can you say that again?"]
