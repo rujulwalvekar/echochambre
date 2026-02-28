@@ -38,12 +38,13 @@ class ChatRequest(BaseModel):
     history: List[ChatMessage]
 
 class WhatsAppRequest(BaseModel):
-    from_: str
+    # Pydantic v2-compatible aliasing: accept JSON key "from"
+    from_: str = __import__("pydantic").Field(alias="from")
     text: str
 
-    # allow payload key "from" (reserved word in Python)
-    class Config:
-        fields = {"from_": "from"}
+    model_config = {
+        "populate_by_name": True,
+    }
 
 # --- Routes ---
 
