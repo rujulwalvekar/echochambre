@@ -37,6 +37,14 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     history: List[ChatMessage]
 
+class WhatsAppRequest(BaseModel):
+    from_: str
+    text: str
+
+    # allow payload key "from" (reserved word in Python)
+    class Config:
+        fields = {"from_": "from"}
+
 # --- Routes ---
 
 @app.get("/", response_class=HTMLResponse)
@@ -132,26 +140,74 @@ async def process_voice_input(data: VoiceInputRequest):
 async def chat(request: ChatRequest):
     # Convert Pydantic models to dicts for the service
     history_dicts = [{"role": msg.role, "content": msg.content} for msg in request.history]
-    
+
     # Fetch recent anchors (strength)
     recent_anchors = database.get_recent_entries('ANCHOR', limit=3)
     anchor_texts = [a["content"] for a in recent_anchors]
-    
+
     # Fetch recent journal entries (context/feelings)
     recent_journal = database.get_recent_entries('JOURNAL', limit=3)
     journal_texts = [j["content"] for j in recent_journal]
-    
+
     # Fetch User Profile
     user_profile = database.get_profile()
-    
+
     response_text = llm_service.generate_chat_response(
-        history_dicts, 
+        history_dicts,
         context=anchor_texts,
         journal_context=journal_texts,
-        user_profile=user_profile
+        user_profile=user_profile,
     )
-    
+
     # Split by delimiter to get multiple messages
     messages = [msg.strip() for msg in response_text.split("|||") if msg.strip()]
-    
+
     return JSONResponse(content={"response": messages})
+
+
+@app.post("/whatsapp")
+async def whatsapp(request: WhatsAppRequest):
+    """Adapter endpoint: lets OpenClaw (or any client) use EchoChambre chat over WhatsApp.
+
+    Input: {"from": "+E164", "text": "..."}
+    Output: {"messages": ["...", "..."]}
+    """
+
+    peer = request.from_.strip()
+    text = request.text.strip()
+    if not peer or not text:
+        raise HTTPException(status_code=400, detail="'from' and 'text' are required")
+
+    # Load last N turns for this peer
+    convo = database.get_conversation(peer, limit=20)
+    history_dicts = [{"role": m["role"], "content": m["content"]} for m in convo]
+
+    # Append current user message
+    history_dicts.append({"role": "user", "content": text})
+
+    # Persist user message
+    database.add_conversation_message(peer, "user", text)
+
+    # Context: anchors + journal + profile (same as /chat)
+    recent_anchors = database.get_recent_entries('ANCHOR', limit=3)
+    anchor_texts = [a["content"] for a in recent_anchors]
+
+    recent_journal = database.get_recent_entries('JOURNAL', limit=3)
+    journal_texts = [j["content"] for j in recent_journal]
+
+    user_profile = database.get_profile()
+
+    response_text = llm_service.generate_chat_response(
+        history_dicts,
+        context=anchor_texts,
+        journal_context=journal_texts,
+        user_profile=user_profile,
+    )
+
+    messages = [msg.strip() for msg in response_text.split("|||") if msg.strip()]
+
+    # Persist assistant messages
+    for msg in messages:
+        database.add_conversation_message(peer, "assistant", msg)
+
+    return JSONResponse(content={"messages": messages})

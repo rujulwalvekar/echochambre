@@ -39,7 +39,18 @@ def init_db():
                 value JSONB
             )
         ''')
-        
+
+        # Conversation history (e.g., WhatsApp per-sender threads)
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS conversations (
+                id SERIAL PRIMARY KEY,
+                peer TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        ''')
+
         conn.commit()
         
         # Initialize default profile structure if empty
@@ -150,3 +161,45 @@ def get_random_anchors(limit: int = 3) -> List[str]:
     rows = c.fetchall()
     conn.close()
     return [row['content'] for row in rows]
+
+# --- Conversations (WhatsApp adapter uses this) ---
+
+def add_conversation_message(peer: str, role: str, content: str):
+    if role not in ("user", "assistant"):
+        raise ValueError("role must be 'user' or 'assistant'")
+    if not peer or not peer.strip():
+        raise ValueError("peer is required")
+    if not content or not content.strip():
+        return
+
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute(
+        'INSERT INTO conversations (peer, role, content) VALUES (%s, %s, %s)',
+        (peer.strip(), role, content),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_conversation(peer: str, limit: int = 20) -> List[Dict[str, Any]]:
+    if not peer or not peer.strip():
+        return []
+
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute(
+        'SELECT role, content, created_at FROM conversations WHERE peer = %s ORDER BY created_at DESC LIMIT %s',
+        (peer.strip(), limit),
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    # Return chronological order
+    results = []
+    for row in reversed(rows):
+        d = dict(row)
+        if d.get('created_at'):
+            d['created_at'] = str(d['created_at'])
+        results.append(d)
+    return results
