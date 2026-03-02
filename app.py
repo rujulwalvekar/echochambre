@@ -135,21 +135,32 @@ def infer_entry_type(text: str, explicit_kind: str | None = None) -> str:
 
 @app.post("/ingest")
 async def ingest(data: IngestRequest):
-    """No-LLM ingest endpoint. Always stores the entry; safe to use when Gemini is rate-limited."""
+    """Ingest endpoint for WhatsApp logging.
+
+    Restores the original behavior: enrich each entry with LLM-derived metadata
+    (people/tags/emotions/problem/summary) so the Brain UI can show context.
+
+    Note: this can be slower than a pure no-LLM ingest.
+    """
     text = (data.text or "").strip()
     peer = (data.from_ or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text cannot be empty")
 
-    entry_type = infer_entry_type(text, data.kind)
+    # Prefer LLM analysis for rich metadata; fall back to heuristic typing.
+    analysis = llm_service.analyze_entry(text)
+    entry_type = (analysis.get("type") or "").strip().upper() if isinstance(analysis, dict) else ""
+    if entry_type not in {"ANCHOR", "JOURNAL"}:
+        entry_type = infer_entry_type(text, data.kind)
 
-    metadata = {
+    metadata = analysis if isinstance(analysis, dict) else {}
+    metadata.update({
         "source": "whatsapp",
         "from": peer,
         "is_question": text.endswith("?"),
-    }
+    })
 
-    # Store as an entry (brain memory)
+    # Store as an entry (brain memory) with rich metadata
     database.add_entry(text, entry_type, metadata=metadata)
 
     # Store in conversation history too (best-effort)
