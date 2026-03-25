@@ -107,6 +107,14 @@ def update_profile(profile_data: Dict):
 def add_anchor(content: str):
     add_entry(content, 'ANCHOR')
 
+def get_entry_count() -> int:
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT count(*) FROM entries')
+    count = c.fetchone()['count']
+    conn.close()
+    return count
+
 def get_recent_entries(entry_type: str = 'ANCHOR', limit: int = 5) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     c = conn.cursor()

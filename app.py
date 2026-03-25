@@ -106,19 +106,19 @@ async def process_voice_input(data: VoiceInputRequest):
     # 2. Save Entry + Rich Metadata
     database.add_entry(data.content, entry_type, metadata=analysis)
     
-    # 3. Dynamic Profile Update (Simple trigger: update on every entry for MVP)
-    # In production, you'd do this async or every N entries
+    # 3. Dynamic Profile Update — only every 5 entries to save cost and speed
     try:
-        current_profile = database.get_profile()
-        # Get last 5 entries to give context for profile update
-        recent_entries = database.get_recent_entries("ALL", limit=5)
-        recent_text = "\n".join([e['content'] for e in recent_entries])
-        
-        updated_profile = llm_service.analyze_profile(recent_text, current_profile)
-        database.update_profile(updated_profile)
-        print("Profile Updated:", updated_profile)
+        entry_count = database.get_entry_count()
+        if entry_count % 5 == 0:
+            current_profile = database.get_profile()
+            recent_entries = database.get_recent_entries("ALL", limit=10)
+            recent_text = "\n".join([e['content'] for e in recent_entries])
+
+            updated_profile = llm_service.analyze_profile(recent_text, current_profile)
+            database.update_profile(updated_profile)
+            print(f"Profile updated at entry #{entry_count}")
     except Exception as e:
-        print(f"Background profile update failed: {e}")
+        print(f"Profile update failed: {e}")
     
     return JSONResponse(content={
         "status": "success",

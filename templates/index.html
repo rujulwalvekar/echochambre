@@ -179,7 +179,7 @@
                             :class="msg.role === 'assistant' 
                             ? 'bg-slate-800 text-slate-200 rounded-2xl rounded-bl-sm p-4 text-sm leading-relaxed shadow-md border border-white/5' 
                             : 'bg-indigo-600 text-white rounded-2xl rounded-br-sm p-4 text-sm leading-relaxed shadow-md'">
-                            <span x-html="msg.text"></span>
+                            <span x-text="msg.text"></span>
                         </div>
                     </div>
                 </div>
