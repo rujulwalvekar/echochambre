@@ -13,6 +13,32 @@ if not api_key:
 client = genai.Client(api_key=api_key) if api_key else None
 
 MODEL = "gemini-2.5-flash"
+EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_DIM = 768
+
+
+def get_embedding(text: str) -> list:
+    """Generate a 768-dim embedding using Gemini's free embedding model."""
+    if not client:
+        return []
+    result = client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=text,
+        config=genai.types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIM),
+    )
+    return list(result.embeddings[0].values)
+
+
+def get_embeddings_batch(texts: list) -> list:
+    """Batch embed multiple texts in one API call."""
+    if not client or not texts:
+        return []
+    result = client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=texts,
+        config=genai.types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIM),
+    )
+    return [list(e.values) for e in result.embeddings]
 
 
 def _call(system: str, user_prompt: str) -> str:

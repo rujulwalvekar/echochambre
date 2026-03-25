@@ -8,3 +8,4 @@ psycopg2-binary==2.9.11
 gunicorn==25.2.0
 starlette==1.0.0
 pydantic==2.12.5
+pgvector==0.3.6
