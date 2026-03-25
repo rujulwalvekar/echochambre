@@ -13,9 +13,7 @@ def get_db_connection():
     if not db_url:
         raise ValueError("DATABASE_URL environment variable is not set. Please add your Supabase connection string to .env")
     
-    # Keep serverless calls snappy: fail fast on network/DB issues.
-    # psycopg2 supports connect_timeout (seconds).
-    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor, connect_timeout=3)
+    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
     return conn
 
 def init_db():
@@ -33,14 +31,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         ''')
-
-        # Full-text search index for semantic-ish retrieval (fast, hackathon-safe).
-        # Uses built-in Postgres FTS (no extensions required).
-        c.execute('''
-            CREATE INDEX IF NOT EXISTS entries_content_fts_idx
-            ON entries
-            USING GIN (to_tsvector('english', content))
-        ''')
         
         # User Profile table
         c.execute('''
@@ -49,18 +39,7 @@ def init_db():
                 value JSONB
             )
         ''')
-
-        # Conversation history (e.g., WhatsApp per-sender threads)
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS conversations (
-                id SERIAL PRIMARY KEY,
-                peer TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('user','assistant')),
-                content TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        ''')
-
+        
         conn.commit()
         
         # Initialize default profile structure if empty
@@ -128,84 +107,38 @@ def update_profile(profile_data: Dict):
 def add_anchor(content: str):
     add_entry(content, 'ANCHOR')
 
-def _normalize_entry_rows(rows) -> List[Dict[str, Any]]:
-    results = []
-    for row in rows:
-        d = dict(row)
-
-        if isinstance(d.get('metadata'), str):
-            try:
-                d['metadata'] = json.loads(d['metadata'])
-            except Exception:
-                d['metadata'] = {}
-        elif d.get('metadata') is None:
-            d['metadata'] = {}
-
-        if d.get('created_at'):
-            d['created_at'] = str(d['created_at'])
-
-        results.append(d)
-    return results
-
-
 def get_recent_entries(entry_type: str = 'ANCHOR', limit: int = 5) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     c = conn.cursor()
+    # If type is ALL, fetch everything
     if entry_type == 'ALL':
         c.execute('SELECT * FROM entries ORDER BY created_at DESC LIMIT %s', (limit,))
     else:
         c.execute('SELECT * FROM entries WHERE type = %s ORDER BY created_at DESC LIMIT %s', (entry_type, limit))
-
+        
     rows = c.fetchall()
     conn.close()
-    return _normalize_entry_rows(rows)
-
-
-def search_entries(query: str, entry_type: str = 'ALL', limit: int = 5) -> List[Dict[str, Any]]:
-    """Semantic-ish retrieval using Postgres full-text search.
-
-    This replaces naive "last N" context selection and prevents unrelated recency bias.
-    """
-    if not query or not query.strip():
-        return get_recent_entries(entry_type if entry_type != 'ALL' else 'ALL', limit)
-
-    conn = get_db_connection()
-    c = conn.cursor()
-
-    if entry_type == 'ALL':
-        c.execute(
-            '''
-            SELECT *
-            FROM entries
-            WHERE to_tsvector('english', content) @@ plainto_tsquery('english', %s)
-            ORDER BY ts_rank_cd(to_tsvector('english', content), plainto_tsquery('english', %s)) DESC,
-                     created_at DESC
-            LIMIT %s
-            ''',
-            (query, query, limit),
-        )
-    else:
-        c.execute(
-            '''
-            SELECT *
-            FROM entries
-            WHERE type = %s
-              AND to_tsvector('english', content) @@ plainto_tsquery('english', %s)
-            ORDER BY ts_rank_cd(to_tsvector('english', content), plainto_tsquery('english', %s)) DESC,
-                     created_at DESC
-            LIMIT %s
-            ''',
-            (entry_type, query, query, limit),
-        )
-
-    rows = c.fetchall()
-    conn.close()
-
-    # Fallback to recency if nothing matched.
-    if not rows:
-        return get_recent_entries(entry_type if entry_type != 'ALL' else 'ALL', limit)
-
-    return _normalize_entry_rows(rows)
+    
+    results = []
+    for row in rows:
+        # Convert row to dict (RealDictCursor already does this conceptually, but ensuring copy)
+        d = dict(row)
+        
+        # Handle metadata: JSONB returns dict, but check just in case
+        if isinstance(d.get('metadata'), str):
+             try:
+                d['metadata'] = json.loads(d['metadata'])
+             except:
+                d['metadata'] = {}
+        elif d.get('metadata') is None:
+            d['metadata'] = {}
+            
+        # Handle created_at formatting (Postgres returns datetime object)
+        if d.get('created_at'):
+             d['created_at'] = str(d['created_at'])
+             
+        results.append(d)
+    return results
 
 def get_recent_anchors(limit: int = 5) -> List[Dict[str, Any]]:
     return get_recent_entries('ANCHOR', limit)
@@ -217,45 +150,3 @@ def get_random_anchors(limit: int = 3) -> List[str]:
     rows = c.fetchall()
     conn.close()
     return [row['content'] for row in rows]
-
-# --- Conversations (WhatsApp adapter uses this) ---
-
-def add_conversation_message(peer: str, role: str, content: str):
-    if role not in ("user", "assistant"):
-        raise ValueError("role must be 'user' or 'assistant'")
-    if not peer or not peer.strip():
-        raise ValueError("peer is required")
-    if not content or not content.strip():
-        return
-
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(
-        'INSERT INTO conversations (peer, role, content) VALUES (%s, %s, %s)',
-        (peer.strip(), role, content),
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_conversation(peer: str, limit: int = 20) -> List[Dict[str, Any]]:
-    if not peer or not peer.strip():
-        return []
-
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(
-        'SELECT role, content, created_at FROM conversations WHERE peer = %s ORDER BY created_at DESC LIMIT %s',
-        (peer.strip(), limit),
-    )
-    rows = c.fetchall()
-    conn.close()
-
-    # Return chronological order
-    results = []
-    for row in reversed(rows):
-        d = dict(row)
-        if d.get('created_at'):
-            d['created_at'] = str(d['created_at'])
-        results.append(d)
-    return results
