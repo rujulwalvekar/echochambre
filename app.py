@@ -138,6 +138,18 @@ async def create_anchor(anchor: AnchorRequest):
     return JSONResponse(content={"anchors": anchors})
 
 
+@app.post("/api/entries/{entry_id}/archive")
+async def archive_entry(entry_id: int):
+    database.archive_entry(entry_id)
+    return JSONResponse(content={"status": "archived", "id": entry_id})
+
+
+@app.post("/api/entries/{entry_id}/restore")
+async def restore_entry(entry_id: int):
+    database.restore_entry(entry_id)
+    return JSONResponse(content={"status": "restored", "id": entry_id})
+
+
 @app.post("/hope")
 async def find_hope(hope: HopeRequest):
     random_anchors = database.get_random_anchors(limit=5)

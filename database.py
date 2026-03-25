@@ -104,10 +104,26 @@ def add_anchor(content: str):
 def get_entry_count() -> int:
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute('SELECT count(*) FROM entries')
+    c.execute('SELECT count(*) FROM entries WHERE archived = false')
     count = c.fetchone()['count']
     conn.close()
     return count
+
+
+def archive_entry(entry_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE entries SET archived = true WHERE id = %s', (entry_id,))
+    conn.commit()
+    conn.close()
+
+
+def restore_entry(entry_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE entries SET archived = false WHERE id = %s', (entry_id,))
+    conn.commit()
+    conn.close()
 
 
 def _normalize_rows(rows) -> List[Dict[str, Any]]:
@@ -137,9 +153,9 @@ def get_recent_entries(entry_type: str = 'ANCHOR', limit: int = 5) -> List[Dict[
     conn = get_db_connection()
     c = conn.cursor()
     if entry_type == 'ALL':
-        c.execute('SELECT * FROM entries ORDER BY created_at DESC LIMIT %s', (limit,))
+        c.execute('SELECT * FROM entries WHERE archived = false ORDER BY created_at DESC LIMIT %s', (limit,))
     else:
-        c.execute('SELECT * FROM entries WHERE type = %s ORDER BY created_at DESC LIMIT %s',
+        c.execute('SELECT * FROM entries WHERE archived = false AND type = %s ORDER BY created_at DESC LIMIT %s',
                   (entry_type, limit))
     rows = c.fetchall()
     conn.close()
@@ -153,7 +169,7 @@ def get_recent_anchors(limit: int = 5) -> List[Dict[str, Any]]:
 def get_random_anchors(limit: int = 3) -> List[str]:
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute('SELECT content FROM entries WHERE type = %s ORDER BY RANDOM() LIMIT %s',
+    c.execute('SELECT content FROM entries WHERE type = %s AND archived = false ORDER BY RANDOM() LIMIT %s',
               ('ANCHOR', limit))
     rows = c.fetchall()
     conn.close()
@@ -169,14 +185,14 @@ def search_entries_vector(query_embedding: list, entry_type: str = 'ALL',
     if entry_type == 'ALL':
         c.execute(
             '''SELECT *, 1 - (embedding <=> %s::vector) AS similarity
-               FROM entries WHERE embedding IS NOT NULL
+               FROM entries WHERE embedding IS NOT NULL AND archived = false
                ORDER BY embedding <=> %s::vector LIMIT %s''',
             (query_embedding, query_embedding, limit)
         )
     else:
         c.execute(
             '''SELECT *, 1 - (embedding <=> %s::vector) AS similarity
-               FROM entries WHERE embedding IS NOT NULL AND type = %s
+               FROM entries WHERE embedding IS NOT NULL AND archived = false AND type = %s
                ORDER BY embedding <=> %s::vector LIMIT %s''',
             (query_embedding, entry_type, query_embedding, limit)
         )
