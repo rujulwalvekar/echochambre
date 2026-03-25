@@ -6,3 +6,5 @@ venv/
 .DS_Store
 echo.db
 .vscode/
+.vercel
+.env*.local

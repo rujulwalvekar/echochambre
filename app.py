@@ -42,18 +42,17 @@ class ChatRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     recent_anchors = database.get_recent_anchors()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", context={
         "anchors": recent_anchors
     })
 
 @app.get("/speech-test", response_class=HTMLResponse)
 async def speech_test(request: Request):
-    return templates.TemplateResponse("speech_test.html", {"request": request})
+    return templates.TemplateResponse(request, "speech_test.html")
 
 @app.get("/brain", response_class=HTMLResponse)
 async def brain_page(request: Request):
-    return templates.TemplateResponse("brain.html", {"request": request})
+    return templates.TemplateResponse(request, "brain.html")
 
 @app.get("/api/brain")
 async def get_brain_data():
