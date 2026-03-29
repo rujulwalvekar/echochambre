@@ -98,18 +98,8 @@ async def ingest(data: IngestRequest):
         source=data.source
     )
 
-    # 4. Profile update every 5 entries
-    try:
-        entry_count = database.get_entry_count()
-        if entry_count % 5 == 0:
-            current_profile = database.get_profile()
-            recent_entries = database.get_recent_entries("ALL", limit=10)
-            recent_text = "\n".join([e['content'] for e in recent_entries])
-            updated_profile = llm_service.analyze_profile(recent_text, current_profile)
-            database.update_profile(updated_profile)
-            print(f"Profile updated at entry #{entry_count}")
-    except Exception as e:
-        print(f"Profile update failed: {e}")
+    # Profile update handled by separate /update-profile endpoint
+    # to avoid Vercel function timeout from double LLM calls
 
     return JSONResponse(content={
         "status": "success",
@@ -124,6 +114,21 @@ async def process_voice_input(data: IngestRequest):
     """Backward-compatible wrapper for the web frontend."""
     data.source = "voice"
     return await ingest(data)
+
+
+@app.post("/update-profile")
+async def update_profile():
+    """Separate endpoint so profile update gets its own Vercel function timeout."""
+    try:
+        current_profile = database.get_profile()
+        recent_entries = database.get_recent_entries("ALL", limit=10)
+        recent_text = "\n".join([e['content'] for e in recent_entries])
+        updated_profile = llm_service.analyze_profile(recent_text, current_profile)
+        database.update_profile(updated_profile)
+        return JSONResponse(content={"status": "success", "profile": updated_profile})
+    except Exception as e:
+        print(f"Profile update failed: {e}")
+        return JSONResponse(content={"status": "error", "detail": str(e)}, status_code=500)
 
 
 @app.post("/anchors")

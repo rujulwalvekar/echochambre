@@ -430,6 +430,12 @@
                             }
                         }, 1000);
 
+                        // Fire-and-forget: update profile in a separate request
+                        fetch('/update-profile', { method: 'POST' })
+                            .then(r => r.json())
+                            .then(d => console.log('Profile updated:', d))
+                            .catch(e => console.warn('Profile update skipped:', e));
+
                         this.lastTranscript = '';
                     } else {
                         console.error('Failed to save:', res.status);
