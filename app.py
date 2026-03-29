@@ -2,10 +2,10 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import database
 import llm_service
-from typing import List
+from typing import List, Optional
 import os
 
 app = FastAPI(title="The Echo Chamber")
@@ -41,6 +41,12 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     history: List[ChatMessage]
+
+class WhatsAppRequest(BaseModel):
+    from_: str = Field(alias="from")
+    text: str
+
+    model_config = {"populate_by_name": True}
 
 
 # --- Pages ---
@@ -165,6 +171,74 @@ async def find_hope(hope: HopeRequest):
         anchors=random_anchors
     )
     return JSONResponse(content={"response": response_text})
+
+
+SMALL_TALK = {"hi", "hey", "hello", "yo", "sup", "hola", "hii", "hiii", "heyyy"}
+
+@app.post("/whatsapp")
+async def whatsapp(req: WhatsAppRequest):
+    """WhatsApp adapter — any client can POST {"from": "+1234", "text": "..."}."""
+    peer = req.from_
+    text = req.text.strip()
+
+    if not text:
+        return JSONResponse(content={"messages": ["Send me a thought and I'll reflect on it."]})
+
+    # Small-talk guard — skip LLM for greetings
+    if text.lower().rstrip("!.? ") in SMALL_TALK:
+        database.add_conversation_message(peer, "user", text)
+        greeting = "Hey! What's on your mind today?"
+        database.add_conversation_message(peer, "assistant", greeting)
+        return JSONResponse(content={"messages": [greeting]})
+
+    # 1. Persist user message
+    database.add_conversation_message(peer, "user", text)
+
+    # 2. Ingest as entry (classify + embed + store in Brain)
+    try:
+        analysis = llm_service.analyze_entry(text)
+        entry_type = analysis.get("type", "JOURNAL")
+        embedding = llm_service.get_embedding(text)
+        database.add_entry(
+            text, entry_type, metadata=analysis,
+            embedding=embedding if embedding else None,
+            source="whatsapp"
+        )
+    except Exception as e:
+        print(f"WhatsApp ingest failed (non-fatal): {e}")
+
+    # 3. Load conversation history for this sender
+    history_rows = database.get_conversation(peer, limit=20)
+    history = [{"role": r["role"], "content": r["content"]} for r in history_rows]
+
+    # 4. Vector search for relevant context
+    query_embedding = llm_service.get_embedding(text)
+    if query_embedding:
+        relevant_anchors = database.search_entries_vector(query_embedding, 'ANCHOR', limit=3)
+        relevant_journals = database.search_entries_vector(query_embedding, 'JOURNAL', limit=3)
+    else:
+        relevant_anchors = database.get_recent_entries('ANCHOR', limit=3)
+        relevant_journals = database.get_recent_entries('JOURNAL', limit=3)
+
+    anchor_texts = [a["content"] for a in relevant_anchors]
+    journal_texts = [j["content"] for j in relevant_journals]
+    user_profile = database.get_profile()
+
+    # 5. Generate response
+    response_text = llm_service.generate_chat_response(
+        history,
+        context=anchor_texts,
+        journal_context=journal_texts,
+        user_profile=user_profile
+    )
+
+    messages = [msg.strip() for msg in response_text.split("|||") if msg.strip()]
+
+    # 6. Persist assistant responses
+    for msg in messages:
+        database.add_conversation_message(peer, "assistant", msg)
+
+    return JSONResponse(content={"messages": messages})
 
 
 @app.post("/chat")
